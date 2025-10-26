@@ -1,0 +1,104 @@
+version: "3.9"
+
+services:
+  database:
+    image: postgres:16-alpine
+    container_name: idp-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-idp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-idp_pw}
+      POSTGRES_DB: ${POSTGRES_DB:-idp_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - idp-net
+
+  pgadmin:
+    image: dpage/pgadmin4:8
+    container_name: idp-pgadmin
+    restart: unless-stopped
+    depends_on:
+      database:
+        condition: service_healthy
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@example.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-adminpw}
+      PGADMIN_DISABLE_POSTFIX: "true"
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+    networks:
+      - idp-net
+
+  cache:
+    image: redis:7-alpine
+    container_name: idp-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - idp-net
+
+  redis-insight:
+    image: redis/redisinsight:2.70
+    container_name: idp-redisinsight
+    restart: unless-stopped
+    depends_on:
+      cache:
+        condition: service_healthy
+    ports:
+      - "5540:5540"
+    volumes:
+      - redisinsight:/data
+    networks:
+      - idp-net
+
+  oidc:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: idp-keycloak
+    restart: unless-stopped
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-adminpw}
+      KC_PROXY: edge
+    command: ["start-dev", "--http-port=8080"]
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "exec 3<>/dev/tcp/127.0.0.1/8080 && echo -e 'GET /' >&3 && timeout 2 cat <&3 | grep -q '</html>'",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    networks:
+      - idp-net
+
+networks:
+  idp-net:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  pgadmin-data:
+  redis-data:
+  redisinsight:
